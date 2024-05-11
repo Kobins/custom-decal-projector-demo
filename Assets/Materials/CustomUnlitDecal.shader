@@ -3,121 +3,111 @@ Shader "Unlit/CustomUnlitDecal"
     Properties
     {
         _MainTex ("Texture", 2D) = "white" {}
+        _NearPlaneOffset ("Near Plane Offset", float) = 0.03
     }
     SubShader
     {
+        Cull Off
+        ZWrite Off
         Tags { "RenderType"="Transparent"  "IgnoreProjector"="True" }
         LOD 100
 
         Pass
         {
-            CGPROGRAM
+            
+            Cull Off
+            ZWrite Off
+            HLSLPROGRAM
             #pragma vertex vert
             #pragma fragment frag
             // make fog work
             #pragma multi_compile_fog
 
-            #include "UnityCG.cginc"
-            // #include "UnityShaderVariables.cginc"
+            // 내장 함수 및 프로퍼티
+            #include "Packages/com.unity.render-pipelines.universal/ShaderLibrary/Core.hlsl"
+
+            // 깊이 버퍼 참조
+            #include "Packages/com.unity.render-pipelines.universal/ShaderLibrary/DeclareDepthTexture.hlsl"
+
+            float _NearPlaneOffset;
             
-
-            struct appdata
+            struct Attributes
             {
-                float4 vertex : POSITION;
-                float2 uv : TEXCOORD0;
+                float4 positionOS   : POSITION;
             };
 
-            struct v2f
+            struct Varyings
             {
-                float2 uv : TEXCOORD0;
-                UNITY_FOG_COORDS(1)
-                float4 vertex : SV_POSITION;
-                float4 screenPosition : TEXCOORD1;
-                float3 camRelativeWorldPos : TEXCOORD2;
+                // HCS: Homogeneous Clip Space, 동차 클립 공간
+                float4 positionHCS  : SV_POSITION;
             };
+
+            Varyings vert(Attributes IN)
+            {
+                Varyings OUT;
+                // TransformObjectToHClip: 로컬 공간에서 클립 공간까지 한번에 쭉 보내기
+                OUT.positionHCS = TransformObjectToHClip(IN.positionOS.xyz);
+
+
+    // Get our world-space position and its distance from the camera.
+    float3 positionWS = TransformObjectToWorld(IN.positionOS.xyz);
+    float3 cameraToPositionWS = positionWS - _WorldSpaceCameraPos;
+
+
+    float distanceToCamera = length(cameraToPositionWS) * sign(dot(unity_CameraToWorld._m02_m12_m22, cameraToPositionWS));
+    // float distanceToCamera = dot(unity_CameraToWorld._m02_m12_m22, cameraToPositionWS);
+    float distanceBeforeNearPlane = (distanceToCamera - _NearPlaneOffset) - _ProjectionParams.y;
+
+    // If our vertex is beyond the far plane, then we pull it back in.
+    if (distanceBeforeNearPlane <= 0.0f)
+    {
+        // Our new distance is the previous distance minus the how far past the plane we are.
+        // We use _FarPlaneOffset to provide a material configurable further nudge.
+        float correctedDistance = distanceToCamera - distanceBeforeNearPlane + _NearPlaneOffset;
+        float3 dirCameraToPosition = normalize(cameraToPositionWS);
+        float3 correctedPositionWS = _WorldSpaceCameraPos + (dirCameraToPosition * correctedDistance);
+        
+        // Transform the corrected world-space position to clip space.
+        OUT.positionHCS = TransformWorldToHClip(correctedPositionWS);
+    }
+                
+                return OUT;
+            }
 
             sampler2D _MainTex;
             float4 _MainTex_ST;
-            
-            UNITY_DECLARE_DEPTH_TEXTURE(_CameraDepthTexture);
 
-            v2f vert (appdata v)
+            half4 frag(Varyings IN) : SV_Target
             {
-                v2f o;
-                o.vertex = UnityObjectToClipPos(v.vertex);
-                o.uv = TRANSFORM_TEX(v.uv, _MainTex);
-                UNITY_TRANSFER_FOG(o,o.vertex);
-                o.screenPosition = ComputeScreenPos(o.vertex);
-                o.camRelativeWorldPos = mul(unity_ObjectToWorld, float4(v.vertex.xyz, 1.0)).xyz - _WorldSpaceCameraPos;
-                return o;
-            }
-            
-            float4 ComputeClipSpacePosition(float2 positionNDC, float deviceDepth)
-            {
-                float4 positionCS = float4(positionNDC * 2.0 - 1.0, deviceDepth, 1.0);
+                // SV_POSITION가 가지는 값들 ...
+                // - xy: 픽셀 위치, z: 비선형 깊이, w: 카메라 깊이 (orthogonal은 1.0)
+                // ScaledScreenParams의 xy값으로 나눠서 [0, 1]로 정규화
+                float2 depthUV = IN.positionHCS.xy / _ScaledScreenParams.xy;
 
-            #if UNITY_UV_STARTS_AT_TOP
-                // Our world space, view space, screen space and NDC space are Y-up.
-                // Our clip space is flipped upside-down due to poor legacy Unity design.
-                // The flip is baked into the projection matrix, so we only have to flip
-                // manually when going from CS to NDC and back.
-                positionCS.y = -positionCS.y;
-            #endif
+                // 카메라 깊이 가져오기
+                #if UNITY_REVERSED_Z
+                    real depth = SampleSceneDepth(depthUV);
+                #else
+                    // Adjust Z to match NDC for OpenGL ([-1, 1])
+                    real depth = lerp(UNITY_NEAR_CLIP_VALUE, 1, SampleSceneDepth(UV));
+                #endif
 
-                return positionCS;
-            }
-
-            float3 ComputeWorldSpacePosition(float2 positionSS, float depth, float4x4 invViewProjectionMatrix)
-            {
-                float4 positionCS  = ComputeClipSpacePosition(positionSS, depth);
-                float4 hpositionWS = mul(invViewProjectionMatrix, positionCS);
-                return hpositionWS.xyz / hpositionWS.w;
-            }
-
-            fixed4 frag (v2f i) : SV_Target
-            {
-                // sample the texture
-                fixed4 col = tex2D(_MainTex, i.uv);
-                float2 screenPositionUV = i.screenPosition.xy / i.screenPosition.w;
-                // apply fog
-                // UNITY_APPLY_FOG(i.fogCoord, col);
-                float depth = SAMPLE_DEPTH_TEXTURE(_CameraDepthTexture, screenPositionUV);
-
-                // {
-                //     // get linear depth from the depth
-                //     float sceneZ = LinearEyeDepth(depth);
-                //
-                //     // calculate the view plane vector
-                //     // note: Something like normalize(i.camRelativeWorldPos.xyz) is what you'll see other
-                //     // examples do, but that is wrong! You need a vector that at a 1 unit view depth, not
-                //     // a1 unit magnitude.
-                //     float3 viewPlane = i.camRelativeWorldPos.xyz / dot(i.camRelativeWorldPos.xyz, unity_WorldToCamera._m20_m21_m22);
-                //     
-                //     // calculate the world position
-                //     // multiply the view plane by the linear depth to get the camera relative world space position
-                //     // add the world space camera position to get the world space position from the depth texture
-                //     float3 positionWS = viewPlane * sceneZ + _WorldSpaceCameraPos;
-                //     positionWS = mul(unity_CameraToWorld, float4(positionWS, 1.0));
-                // }
-                
-                // float2 zw = _ScreenParams.zw;
-                // zw.x -= 1;
-                // zw.y -= 1;
-                float3 positionWS = ComputeWorldSpacePosition(screen, depth, mul(unity_CameraInvProjection, UNITY_MATRIX_I_V));
-                float3 positionDS = mul(unity_WorldToObject, float4(positionWS, 1.0));
-                positionDS = positionDS * float3(1.0, -1.0, 1.0); 
-                // call clip as early as possible
-                float clipValue = 0.5 - max(max(abs(positionDS).x, abs(positionDS).y), abs(positionDS).z);
+                // 월드공간 좌표 가져오기
+                float3 positionWS = ComputeWorldSpacePosition(depthUV, depth, UNITY_MATRIX_I_VP);
+                // 월드공간 -> 로컬공간 변환
+                float3 positionOS = mul(unity_WorldToObject, float4(positionWS, 1.0));
+                // 데칼 Projector 박스 범위를 벗어나는 픽셀은 클리핑
+                float clipValue = 0.5 - max(max(abs(positionOS).x, abs(positionOS).y), abs(positionOS).z);
+                if(clipValue <= 0) return half4(1, 1, 1, 0.5);
                 // clip(clipValue);
 
-                // return clipValue;
-                // return sceneZ;
-                // return fixed4(1, 0, 0, 1);
-                    col.rgb = saturate(2.0 - abs(frac(positionWS) * 2.0 - 1.0) * 100.0);
- 
-                return col;
+                // 박스 로컬 좌표 기반으로 UV 구하기
+                float2 uv = positionOS.xy + 0.5;
+                // 텍스처 샘플링
+                half4 color = tex2D(_MainTex, TRANSFORM_TEX(uv, _MainTex));
+                return color;
             }
-            ENDCG
+            ENDHLSL
         }
     }
 }
