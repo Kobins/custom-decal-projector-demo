@@ -8,6 +8,8 @@ Shader "Unlit/CustomUnlitDecal"
     SubShader
     {
         Cull Off
+        ZTest Greater
+//        ZClip True
         ZWrite Off
         Tags { "RenderType"="Transparent"  "IgnoreProjector"="True" }
         LOD 100
@@ -15,7 +17,7 @@ Shader "Unlit/CustomUnlitDecal"
         Pass
         {
             
-            Cull Off
+            Cull Front
             ZWrite Off
             HLSLPROGRAM
             #pragma vertex vert
@@ -48,7 +50,7 @@ Shader "Unlit/CustomUnlitDecal"
                 // TransformObjectToHClip: 로컬 공간에서 클립 공간까지 한번에 쭉 보내기
                 OUT.positionHCS = TransformObjectToHClip(IN.positionOS.xyz);
 
-
+/*
     // Get our world-space position and its distance from the camera.
     float3 positionWS = TransformObjectToWorld(IN.positionOS.xyz);
     float3 cameraToPositionWS = positionWS - _WorldSpaceCameraPos;
@@ -70,7 +72,7 @@ Shader "Unlit/CustomUnlitDecal"
         // Transform the corrected world-space position to clip space.
         OUT.positionHCS = TransformWorldToHClip(correctedPositionWS);
     }
-                
+     */           
                 return OUT;
             }
 
@@ -98,8 +100,8 @@ Shader "Unlit/CustomUnlitDecal"
                 float3 positionOS = mul(unity_WorldToObject, float4(positionWS, 1.0));
                 // 데칼 Projector 박스 범위를 벗어나는 픽셀은 클리핑
                 float clipValue = 0.5 - max(max(abs(positionOS).x, abs(positionOS).y), abs(positionOS).z);
-                if(clipValue <= 0) return half4(1, 1, 1, 0.5);
-                // clip(clipValue);
+                // if(clipValue <= 0) return half4(1, 1, 1, 0.5);
+                clip(clipValue);
 
                 // 박스 로컬 좌표 기반으로 UV 구하기
                 float2 uv = positionOS.xy + 0.5;
