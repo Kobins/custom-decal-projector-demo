@@ -9,7 +9,6 @@ Shader "Unlit/CustomUnlitDecal"
     {
         Cull Off
         ZTest Greater
-//        ZClip True
         ZWrite Off
         Tags { "RenderType"="Transparent"  "IgnoreProjector"="True" }
         LOD 100
@@ -49,30 +48,6 @@ Shader "Unlit/CustomUnlitDecal"
                 Varyings OUT;
                 // TransformObjectToHClip: 로컬 공간에서 클립 공간까지 한번에 쭉 보내기
                 OUT.positionHCS = TransformObjectToHClip(IN.positionOS.xyz);
-
-/*
-    // Get our world-space position and its distance from the camera.
-    float3 positionWS = TransformObjectToWorld(IN.positionOS.xyz);
-    float3 cameraToPositionWS = positionWS - _WorldSpaceCameraPos;
-
-
-    float distanceToCamera = length(cameraToPositionWS) * sign(dot(unity_CameraToWorld._m02_m12_m22, cameraToPositionWS));
-    // float distanceToCamera = dot(unity_CameraToWorld._m02_m12_m22, cameraToPositionWS);
-    float distanceBeforeNearPlane = (distanceToCamera - _NearPlaneOffset) - _ProjectionParams.y;
-
-    // If our vertex is beyond the far plane, then we pull it back in.
-    if (distanceBeforeNearPlane <= 0.0f)
-    {
-        // Our new distance is the previous distance minus the how far past the plane we are.
-        // We use _FarPlaneOffset to provide a material configurable further nudge.
-        float correctedDistance = distanceToCamera - distanceBeforeNearPlane + _NearPlaneOffset;
-        float3 dirCameraToPosition = normalize(cameraToPositionWS);
-        float3 correctedPositionWS = _WorldSpaceCameraPos + (dirCameraToPosition * correctedDistance);
-        
-        // Transform the corrected world-space position to clip space.
-        OUT.positionHCS = TransformWorldToHClip(correctedPositionWS);
-    }
-     */           
                 return OUT;
             }
 
