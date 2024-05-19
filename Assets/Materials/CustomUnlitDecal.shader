@@ -55,6 +55,14 @@ Shader "Unlit/CustomUnlitDecal"
             float4 _MainTex_ST;
             float2 _AngleFade;
 
+#include "Packages/com.unity.render-pipelines.universal/ShaderLibrary/NormalReconstruction.hlsl"
+half3 ReconstructNormalDerivative0(float2 positionSS)
+{
+    float3 viewSpacePos = ViewSpacePosAtPixelPosition(positionSS);
+    float hDeriv = ddy(viewSpacePos);
+    float vDeriv = ddx(viewSpacePos);
+    return half3(normalize(cross(hDeriv, vDeriv)));
+}
             half4 frag(Varyings IN) : SV_Target
             {
                 // SV_POSITION가 가지는 값들 ...
@@ -79,10 +87,13 @@ Shader "Unlit/CustomUnlitDecal"
                 // if(clipValue <= 0) return half4(1, 1, 1, 0.5);
                 clip(clipValue);
 
-                float3 normal = SampleSceneNormals(depthUV);
+                // 법선 가져오기
+                float3 normalWS = SampleSceneNormals(depthUV);
                 float4x4 objectToWorld = GetObjectToWorldMatrix();
+                // Box forward 가져오기
                 float3 projectorForward = normalize(float3(objectToWorld[0].z, objectToWorld[1].z, objectToWorld[2].z));
-                float angleCos = dot(-projectorForward, normal);
+                // 내적
+                float angleCos = dot(-projectorForward, normalWS);
                 float angleFadeFactor = saturate(_AngleFade.x + _AngleFade.y * (-angleCos * (-angleCos - 2.0)));
                 clip(angleFadeFactor);
                 

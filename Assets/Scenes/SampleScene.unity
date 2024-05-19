@@ -378,8 +378,8 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: 1c422b70f3e137246ba90c7b4a7ea4f4, type: 3}
   m_Name: 
   m_EditorClassIdentifier: 
-  m_StartAngleFade: 42.84095
-  m_EndAngleFade: 180
+  m_StartAngleFade: 0
+  m_EndAngleFade: 108.802414
 --- !u!1 &410087039
 GameObject:
   m_ObjectHideFlags: 0
