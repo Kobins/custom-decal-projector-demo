@@ -16,12 +16,18 @@ Shader "Unlit/CustomUnlitDecal"
 
         Pass
         {
+            Tags { "LightMode" = "UniversalForward" }
             
             HLSLPROGRAM
             #pragma vertex vert
             #pragma fragment frag
             // make fog work
             #pragma multi_compile_fog
+            
+            //1.메인 라이트 셰도우 캐스케이드를 받을 수 있는 키워드를 선언합니다. 이후 TransformWorldToShadowCoord 함수에서 이걸 사용해서요 
+            #pragma multi_compile _ _MAIN_LIGHT_SHADOWS_CASCADE 
+            //2. 소프트 셰도우도 함께 넣어줍니다. 
+            #pragma multi_compile_fragment _ _SHADOWS_SOFT 
 
             // 내장 함수 및 프로퍼티
             #include "Packages/com.unity.render-pipelines.universal/ShaderLibrary/Core.hlsl"
@@ -31,6 +37,9 @@ Shader "Unlit/CustomUnlitDecal"
             
             // 노말 버퍼 참조
             #include "Packages/com.unity.render-pipelines.universal/ShaderLibrary/DeclareNormalsTexture.hlsl"
+
+            // 라이팅
+            #include "Packages/com.unity.render-pipelines.universal/ShaderLibrary/Lighting.hlsl" 
             
             struct Attributes
             {
@@ -96,11 +105,24 @@ half3 ReconstructNormalDerivative0(float2 positionSS)
                 float angleCos = dot(-projectorForward, normalWS);
                 float angleFadeFactor = saturate(_AngleFade.x + _AngleFade.y * (-angleCos * (-angleCos - 2.0)));
                 clip(angleFadeFactor);
+
+                // 월드 포지션 기반으로 MainLight의 Shadow Coord 받아오기
+                // Shadow Coord = Main Light 기준의 뷰 공간, Shadow Mapping 용도
+                float4 shadowCoord = TransformWorldToShadowCoord(positionWS);
+                // Shadow Coord 기반으로 광원 정보 & Shadow Map 값 가져오기 
+                Light light = GetMainLight(shadowCoord);
+
+                // 램버트: n dot l
+                float3 lightDir = normalize(light.direction);
+                float ndotl = saturate(dot(lightDir, normalWS));
+                // 환경광
+                float3 ambient = SampleSH(normalWS);
                 
                 // 박스 로컬 좌표 기반으로 UV 구하기
                 float2 uv = positionOS.xy + 0.5;
                 // 텍스처 샘플링
                 half4 color = tex2D(_MainTex, TRANSFORM_TEX(uv, _MainTex));
+                color.rgb = (ndotl * light.shadowAttenuation * color.rgb) + (ambient * color.rgb);
                 color.a = angleFadeFactor;
                 return color;
             }
