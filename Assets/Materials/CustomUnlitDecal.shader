@@ -3,6 +3,7 @@ Shader "Unlit/CustomUnlitDecal"
     Properties
     {
         _MainTex ("Texture", 2D) = "white" {}
+        _NormalTex ("Normal Map", 2D) = "white" {}
         _AngleFade ("Angle Fade", Vector) = (1, 1, 0, 0)
     }
     SubShader
@@ -62,16 +63,30 @@ Shader "Unlit/CustomUnlitDecal"
 
             sampler2D _MainTex;
             float4 _MainTex_ST;
+            
+            sampler2D _NormalTex;
+            float4 _NormalTex_ST;
+            
             float2 _AngleFade;
 
-#include "Packages/com.unity.render-pipelines.universal/ShaderLibrary/NormalReconstruction.hlsl"
-half3 ReconstructNormalDerivative0(float2 positionSS)
-{
-    float3 viewSpacePos = ViewSpacePosAtPixelPosition(positionSS);
-    float hDeriv = ddy(viewSpacePos);
-    float vDeriv = ddx(viewSpacePos);
-    return half3(normalize(cross(hDeriv, vDeriv)));
-}
+            void NormalToWorldTBN(float3 normalWS, float3 tangentWS, inout float3 T, inout float3 B, inout float3 N)
+            {
+				// half fTangentSign = tangent.w * unity_WorldTransformParams.w;
+				N = normalize(normalWS);
+				T = normalize(tangentWS);
+				// B = normalize(cross(N, T) * fTangentSign);
+				B = normalize(cross(N, T));
+            }
+            
+            #include "Packages/com.unity.render-pipelines.universal/ShaderLibrary/NormalReconstruction.hlsl"
+            float3 ReconstructTangentDerivative(float3 positionSS)
+            {
+                float3 viewSpacePos = ViewSpacePosAtPixelPosition(positionSS);
+                float3 hDeriv = ddy(viewSpacePos);
+                // float3 vDeriv = ddx(viewSpacePos);
+                return normalize(hDeriv);
+            }
+            
             half4 frag(Varyings IN) : SV_Target
             {
                 // SV_POSITION가 가지는 값들 ...
@@ -106,6 +121,17 @@ half3 ReconstructNormalDerivative0(float2 positionSS)
                 float angleFadeFactor = saturate(_AngleFade.x + _AngleFade.y * (-angleCos * (-angleCos - 2.0)));
                 clip(angleFadeFactor);
 
+                // 박스 로컬 좌표 기반으로 UV 구하기
+                float2 uv = positionOS.xy + 0.5;
+
+                float4 normalMapColor = tex2D(_NormalTex, TRANSFORM_TEX(uv, _NormalTex));
+                float3 normalTS = UnpackNormal(normalMapColor);
+                float3 tangentWS = ReconstructNormalDerivative(depthUV);
+                float3 T, B, N;
+                NormalToWorldTBN(normalWS, tangentWS, T, B, N);
+                float3x3 TBN = float3x3(T, B, N);
+                normalWS = mul(normalTS, TBN);
+                
                 // 월드 포지션 기반으로 MainLight의 Shadow Coord 받아오기
                 // Shadow Coord = Main Light 기준의 뷰 공간, Shadow Mapping 용도
                 float4 shadowCoord = TransformWorldToShadowCoord(positionWS);
@@ -118,13 +144,12 @@ half3 ReconstructNormalDerivative0(float2 positionSS)
                 // 환경광
                 float3 ambient = SampleSH(normalWS);
                 
-                // 박스 로컬 좌표 기반으로 UV 구하기
-                float2 uv = positionOS.xy + 0.5;
                 // 텍스처 샘플링
                 half4 color = tex2D(_MainTex, TRANSFORM_TEX(uv, _MainTex));
                 color.rgb = (ndotl * light.shadowAttenuation * color.rgb) + (ambient * color.rgb);
                 color.a = angleFadeFactor;
                 return color;
+                return normalMapColor;
             }
             ENDHLSL
         }
