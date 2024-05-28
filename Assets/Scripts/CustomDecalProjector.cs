@@ -10,6 +10,19 @@ public class CustomDecalProjector : MonoBehaviour
     private MeshFilter _meshFilter;
     private MeshRenderer _renderer;
 
+    [SerializeField] 
+    private Color m_Tint = Color.white;
+
+    public Color Tint
+    {
+        get => m_Tint;
+        set
+        {
+            m_Tint = value;
+            OnValidate();
+        }
+    }
+
     [SerializeField]
     [Range(0, 180)]
     private float m_StartAngleFade = 180.0f;
@@ -56,16 +69,17 @@ public class CustomDecalProjector : MonoBehaviour
         _renderer = GetComponent<MeshRenderer>();
     }
 
+    private MaterialPropertyBlock props;
     private static readonly int AngleFade = Shader.PropertyToID("_AngleFade");
+    private static readonly int TintProperty = Shader.PropertyToID("_Tint");
     private void OnValidate()
     {
-        if(!_renderer) return;
-        var mat = _renderer.sharedMaterial;
-        if(!mat) return;
-        mat.SetVector(AngleFade, new Vector4(startAngleFade / 180f, endAngleFade / 180f, 0f, 0f));
+        if (!_renderer) return;
+        props ??= new MaterialPropertyBlock();
+        props.SetColor(TintProperty, m_Tint);
+        props.SetVector(AngleFade, new Vector4(startAngleFade / 180f, endAngleFade / 180f, 0f, 0f));
+        _renderer.SetPropertyBlock(props);
     }
 
-    private void Update()
-    {
-    }
+
 }

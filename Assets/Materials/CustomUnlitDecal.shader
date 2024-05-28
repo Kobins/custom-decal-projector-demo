@@ -3,8 +3,8 @@ Shader "Unlit/CustomUnlitDecal"
     Properties
     {
         _MainTex ("Texture", 2D) = "white" {}
-        _NormalTex ("Normal Map", 2D) = "white" {}
         _AngleFade ("Angle Fade", Vector) = (1, 1, 0, 0)
+        _Tint ("Tint", Color) = (1, 1, 1, 1)
     }
     SubShader
     {
@@ -25,11 +25,14 @@ Shader "Unlit/CustomUnlitDecal"
             // make fog work
             #pragma multi_compile_fog
             
-            //1.메인 라이트 셰도우 캐스케이드를 받을 수 있는 키워드를 선언합니다. 이후 TransformWorldToShadowCoord 함수에서 이걸 사용해서요 
+            // 메인 라이트 셰도우 캐스케이드를 받을 수 있는 키워드를 선언합니다.
+            // 이후 TransformWorldToShadowCoord 함수에서 사용 
             #pragma multi_compile _ _MAIN_LIGHT_SHADOWS_CASCADE 
-            //2. 소프트 셰도우도 함께 넣어줍니다. 
+            // 소프트 셰도우 
             #pragma multi_compile_fragment _ _SHADOWS_SOFT 
-
+            // GPU Instancing
+            #pragma multi_compile_instancing
+            
             // 내장 함수 및 프로퍼티
             #include "Packages/com.unity.render-pipelines.universal/ShaderLibrary/Core.hlsl"
 
@@ -45,17 +48,22 @@ Shader "Unlit/CustomUnlitDecal"
             struct Attributes
             {
                 float4 positionOS   : POSITION;
+                UNITY_VERTEX_INPUT_INSTANCE_ID
             };
 
             struct Varyings
             {
                 // HCS: Homogeneous Clip Space, 동차 클립 공간
                 float4 positionHCS  : SV_POSITION;
+                UNITY_VERTEX_INPUT_INSTANCE_ID
             };
 
             Varyings vert(Attributes IN)
             {
                 Varyings OUT;
+                UNITY_SETUP_INSTANCE_ID(IN);
+                UNITY_TRANSFER_INSTANCE_ID(IN, OUT);
+                
                 // TransformObjectToHClip: 로컬 공간에서 클립 공간까지 한번에 쭉 보내기
                 OUT.positionHCS = TransformObjectToHClip(IN.positionOS.xyz);
                 return OUT;
@@ -67,28 +75,15 @@ Shader "Unlit/CustomUnlitDecal"
             sampler2D _NormalTex;
             float4 _NormalTex_ST;
             
-            float2 _AngleFade;
 
-            void NormalToWorldTBN(float3 normalWS, float3 tangentWS, inout float3 T, inout float3 B, inout float3 N)
-            {
-				// half fTangentSign = tangent.w * unity_WorldTransformParams.w;
-				N = normalize(normalWS);
-				T = normalize(tangentWS);
-				// B = normalize(cross(N, T) * fTangentSign);
-				B = normalize(cross(N, T));
-            }
-            
-            #include "Packages/com.unity.render-pipelines.universal/ShaderLibrary/NormalReconstruction.hlsl"
-            float3 ReconstructTangentDerivative(float3 positionSS)
-            {
-                float3 viewSpacePos = ViewSpacePosAtPixelPosition(positionSS);
-                float3 hDeriv = ddy(viewSpacePos);
-                // float3 vDeriv = ddx(viewSpacePos);
-                return normalize(hDeriv);
-            }
+            UNITY_INSTANCING_BUFFER_START(Props)
+                UNITY_DEFINE_INSTANCED_PROP(float2, _AngleFade)
+                UNITY_DEFINE_INSTANCED_PROP(float4, _Tint)
+            UNITY_INSTANCING_BUFFER_END(Props)
             
             half4 frag(Varyings IN) : SV_Target
             {
+                UNITY_SETUP_INSTANCE_ID(IN);
                 // SV_POSITION가 가지는 값들 ...
                 // - xy: 픽셀 위치, z: 비선형 깊이, w: 카메라 깊이 (orthogonal은 1.0)
                 // ScaledScreenParams의 xy값으로 나눠서 [0, 1]로 정규화
@@ -105,12 +100,13 @@ Shader "Unlit/CustomUnlitDecal"
                 // 월드공간 좌표 가져오기
                 float3 positionWS = ComputeWorldSpacePosition(depthUV, depth, UNITY_MATRIX_I_VP);
                 // 월드공간 -> 로컬공간 변환
-                float3 positionOS = mul(GetWorldToObjectMatrix(), float4(positionWS, 1.0));
+                float3 positionOS = TransformWorldToObject(positionWS);
                 // 데칼 Projector 박스 범위를 벗어나는 픽셀은 클리핑
                 float clipValue = 0.5 - max(max(abs(positionOS).x, abs(positionOS).y), abs(positionOS).z);
                 // if(clipValue <= 0) return half4(1, 1, 1, 0.5);
                 clip(clipValue);
 
+                
                 // 법선 가져오기
                 float3 normalWS = SampleSceneNormals(depthUV);
                 float4x4 objectToWorld = GetObjectToWorldMatrix();
@@ -118,19 +114,10 @@ Shader "Unlit/CustomUnlitDecal"
                 float3 projectorForward = normalize(float3(objectToWorld[0].z, objectToWorld[1].z, objectToWorld[2].z));
                 // 내적
                 float angleCos = dot(-projectorForward, normalWS);
-                float angleFadeFactor = saturate(_AngleFade.x + _AngleFade.y * (-angleCos * (-angleCos - 2.0)));
+                float2 angleFadeSettings = UNITY_ACCESS_INSTANCED_PROP(Props, _AngleFade);
+                float angleFadeFactor = saturate(angleFadeSettings.x + angleFadeSettings.y * (-angleCos * (-angleCos - 2.0)));
                 clip(angleFadeFactor);
 
-                // 박스 로컬 좌표 기반으로 UV 구하기
-                float2 uv = positionOS.xy + 0.5;
-
-                float4 normalMapColor = tex2D(_NormalTex, TRANSFORM_TEX(uv, _NormalTex));
-                float3 normalTS = UnpackNormal(normalMapColor);
-                float3 tangentWS = ReconstructNormalDerivative(depthUV);
-                float3 T, B, N;
-                NormalToWorldTBN(normalWS, tangentWS, T, B, N);
-                float3x3 TBN = float3x3(T, B, N);
-                normalWS = mul(normalTS, TBN);
                 
                 // 월드 포지션 기반으로 MainLight의 Shadow Coord 받아오기
                 // Shadow Coord = Main Light 기준의 뷰 공간, Shadow Mapping 용도
@@ -143,13 +130,16 @@ Shader "Unlit/CustomUnlitDecal"
                 float ndotl = saturate(dot(lightDir, normalWS));
                 // 환경광
                 float3 ambient = SampleSH(normalWS);
+
                 
                 // 텍스처 샘플링
+                // 박스 로컬 좌표 기반으로 UV 구하기
+                float2 uv = positionOS.xy + 0.5;
                 half4 color = tex2D(_MainTex, TRANSFORM_TEX(uv, _MainTex));
+                color.rgb *= UNITY_ACCESS_INSTANCED_PROP(Props, _Tint);
                 color.rgb = (ndotl * light.shadowAttenuation * color.rgb) + (ambient * color.rgb);
                 color.a = angleFadeFactor;
                 return color;
-                return normalMapColor;
             }
             ENDHLSL
         }
